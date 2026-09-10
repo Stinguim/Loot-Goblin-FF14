@@ -29,7 +29,7 @@ public sealed class Plugin : IDalamudPlugin
     public readonly WindowSystem WindowSystem = new("SamplePlugin");
     private ConfigWindow ConfigWindow { get; init; }
     private MainWindow MainWindow { get; init; }
-    private LootTracker LootTracker { get; init; }
+    internal LootTracker LootTracker { get; init; }
 
     public Plugin()
     {

@@ -34,8 +34,31 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
-        ImGui.Text("Loot Results");
-        ImGui.Separator();
-        ImGui.TextDisabled("No Loot items to showcase");
+        var session = plugin.LootTracker.CurrentSession;
+
+        if (session.Items.Count == 0)
+        {
+            ImGui.TextDisabled("No loot items to showcase.");
+            return;
+        }
+
+        foreach (var item in session.Items.Values)
+        {
+            ImGui.Text($"Item {item.ItemId}");
+            ImGui.Separator();
+
+            foreach (var roll in item.Rolls)
+            {
+                var valueText = roll.Value is uint.MaxValue or null ? "-" : roll.Value.ToString();
+                ImGui.Text($"{roll.Type}  {roll.PlayerName}  {valueText}");
+            }
+
+            if (item.IsComplete && item.Winner != null)
+            {
+                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.85f, 0.2f, 1f), $"Winner: {item.Winner}");
+            }
+
+            ImGui.Spacing();
+        }
     }
 }
