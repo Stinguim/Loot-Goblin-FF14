@@ -5,11 +5,14 @@ using System.IO;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using SamplePlugin.Windows;
+using Dalamud.Game.Addon.Lifecycle;
+using SamplePlugin.LootTracking;
 
 namespace SamplePlugin;
 
 public sealed class Plugin : IDalamudPlugin
 {
+    [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
@@ -18,13 +21,14 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
-    private const string CommandName = "/pmycommand";
+    private const string CommandName = "/lootcheck";
 
     public Configuration Configuration { get; init; }
 
     public readonly WindowSystem WindowSystem = new("SamplePlugin");
     private ConfigWindow ConfigWindow { get; init; }
     private MainWindow MainWindow { get; init; }
+    private LootTracker LootTracker { get; init; }
 
     public Plugin()
     {
@@ -38,10 +42,11 @@ public sealed class Plugin : IDalamudPlugin
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
+        LootTracker = new LootTracker(AddonLifecycle, Log);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "A useful message to display in /xlhelp"
+            HelpMessage = "Opens/Closes the loot results window."
         });
 
         // Tell the UI system that we want our windows to be drawn through the window system
@@ -71,6 +76,8 @@ public sealed class Plugin : IDalamudPlugin
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();
+
+        LootTracker.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
     }
