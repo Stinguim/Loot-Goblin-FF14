@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
 
     private const string CommandName = "/lootcheck";
 
@@ -42,7 +43,7 @@ public sealed class Plugin : IDalamudPlugin
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
-        LootTracker = new LootTracker(AddonLifecycle, Log);
+        LootTracker = new LootTracker(AddonLifecycle, ChatGui, Log);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
