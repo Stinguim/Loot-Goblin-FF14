@@ -10,31 +10,31 @@ public enum RollType
 public sealed class LootRoll
 {
     /// <summary>
-    /// Nome do jogador (incluindo servidor se disponível).
-    /// Nunca é null; default = string.Empty.
+    /// Player's name (including world/server when available).
+    /// Never null; defaults to an empty string.
     /// </summary>
     public string PlayerName { get; private set; } = string.Empty;
 
     /// <summary>
-    /// Tipo de roll efetuado (Need, Greed ou Pass).
+    /// The roll type performed by the player (Need, Greed, or Pass).
     /// </summary>
     public RollType Type { get; private set; }
 
     /// <summary>
-    /// Valor tirado nos dados (1 a 99).
-    /// Só é válido quando Type = Need ou Greed.
-    /// Fica null quando Pass ou quando ainda não rolou.
+    /// The numeric roll result (1–99).
+    /// Only valid when Type = Need or Greed.
+    /// Null when the player passed or when the roll has not yet occurred.
     /// </summary>
     public int? Value { get; private set; }
 
     /// <summary>
-    /// ClassJob (id da sheet ClassJob) do jogador no momento do roll.
-    /// Null quando não foi possível resolver.
+    /// The player's ClassJob ID (from the ClassJob sheet) at the moment of the roll.
+    /// Null when the job could not be resolved.
     /// </summary>
     public uint? ClassJobId { get; private set; }
 
     /// <summary>
-    /// Construtor seguro que garante integridade dos dados.
+    /// Safe constructor ensuring consistent and validated roll data.
     /// </summary>
     public LootRoll(string playerName, RollType type, int? value = null, uint? classJobId = null)
     {
@@ -42,17 +42,17 @@ public sealed class LootRoll
         Type = type;
         ClassJobId = classJobId;
 
-        // Validação automática do valor
+        // Automatic validation of roll value
         if (type == RollType.Pass)
         {
-            Value = null; // Pass nunca tem valor
+            Value = null; // Pass rolls never have a numeric value
         }
         else
         {
-            // Need/Greed → valor opcional mas deve ser válido se existir
+            // Need/Greed → optional value, but must be valid if provided
             if (value is < 1 or > 99)
             {
-                Value = null; // valor inválido → ignora
+                Value = null; // Invalid value → ignore
             }
             else
             {
@@ -62,7 +62,7 @@ public sealed class LootRoll
     }
 
     /// <summary>
-    /// Atualiza o valor do roll de forma segura.
+    /// Safely updates the roll value.
     /// </summary>
     public void SetValue(int? newValue)
     {
@@ -82,7 +82,7 @@ public sealed class LootRoll
     }
 
     /// <summary>
-    /// Atualiza o nome do jogador de forma segura.
+    /// Safely updates the player's name.
     /// </summary>
     public void SetPlayerName(string name)
     {
@@ -90,7 +90,7 @@ public sealed class LootRoll
     }
 
     /// <summary>
-    /// Atualiza o ClassJobId.
+    /// Updates the ClassJobId.
     /// </summary>
     public void SetClassJob(uint? classJobId)
     {

@@ -16,7 +16,7 @@
     ],
     "DalamudApiLevel": 15,
     "LoadPriority": 0,
-    "IconUrl": "",
+    "IconUrl": "https://raw.githubusercontent.com/Stinguim/Loot-Goblin-FF14/master/Data/icon.png",
     "ImageUrls": [],
     "DownloadLinkInstall": "https://github.com/Stinguim/Loot-Goblin-FF14/releases/latest/download/LootGoblin.zip",
     "DownloadLinkTesting": "https://github.com/Stinguim/Loot-Goblin-FF14/releases/latest/download/LootGoblin.zip",

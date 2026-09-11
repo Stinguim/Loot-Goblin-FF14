@@ -3,8 +3,9 @@ using System.Collections.Generic;
 namespace SamplePlugin.LootTracking;
 
 /// <summary>
-/// Sessão de loot atual, dividida em "baús" (cada abertura da janela NeedGreed
-/// do jogo corresponde a um novo <see cref="LootChest"/>).
+/// Represents the current loot session, divided into individual "chests".
+/// Each time the game's NeedGreed window opens, a new <see cref="LootChest"/>
+/// is created and tracked within this session.
 /// </summary>
 public sealed class LootSession
 {
@@ -14,13 +15,15 @@ public sealed class LootSession
     public IReadOnlyList<LootChest> Chests => chests;
 
     /// <summary>
-    /// Baú atualmente "aberto" (o mais recente a receber PostSetup do addon).
-    /// </summary>
+    /// The currently active chest — the most recent one that received
+    /// PostSetup from the NeedGreed addon.
+/// </summary>
     public LootChest? CurrentChest { get; private set; }
 
     /// <summary>
-    /// Inicia um novo baú (chamado quando o addon NeedGreed abre) e passa a ser o atual.
-    /// </summary>
+    /// Creates and registers a new chest when the NeedGreed addon opens.
+    /// This chest becomes the active one for incoming loot events.
+/// </summary>
     public LootChest StartNewChest(string dungeonName)
     {
         chestCounter++;
@@ -37,6 +40,9 @@ public sealed class LootSession
         return chest;
     }
 
+    /// <summary>
+    /// Clears all tracked chests and resets the session state.
+    /// </summary>
     public void Clear()
     {
         chests.Clear();

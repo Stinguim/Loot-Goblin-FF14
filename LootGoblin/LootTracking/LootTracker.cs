@@ -15,6 +15,11 @@ using Lumina.Excel.Sheets;
 
 namespace SamplePlugin.LootTracking;
 
+/// <summary>
+/// Core loot‑tracking engine. Monitors Need/Greed addon lifecycle events,
+/// parses chat messages related to loot rolls, and updates the active
+/// <see cref="LootSession"/> accordingly.
+/// </summary>
 public sealed class LootTracker : IDisposable
 {
     private const string AddonName = "NeedGreed";
@@ -27,16 +32,28 @@ public sealed class LootTracker : IDisposable
     private readonly IPartyList partyList;
     private readonly IPluginLog log;
 
+    /// <summary>
+    /// The currently active loot session, containing all chests opened
+    /// during the current duty or gameplay segment.
+    /// </summary>
     public LootSession CurrentSession { get; } = new();
 
     private bool chestIsOpen;
     private DateTime? chestClosedAt;
 
+    /// <summary>
+    /// Grace period allowing the NeedGreed window to reopen without
+    /// creating a new chest (e.g., UI flicker or quick refresh).
+    /// </summary>
     private static readonly TimeSpan ChestReopenGracePeriod =
         TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Fired whenever a new chest is detected and initialized.
+    /// </summary>
     public event System.Action? ChestOpened;
 
+    // Chat parsing regexes
     private static readonly Regex RollValueRegex = new(
         @"^(?<player>.+?) rolls? (?<type>Need|Greed|Pass) on the .+\. (?<value>\d+)!$",
         RegexOptions.Compiled);
@@ -57,6 +74,9 @@ public sealed class LootTracker : IDisposable
         @"^(?<player>.+?) obtains? a",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Initializes the loot tracker and registers all addon and chat listeners.
+    /// </summary>
     public LootTracker(
         IAddonLifecycle addonLifecycle,
         IChatGui chatGui,
@@ -97,6 +117,9 @@ public sealed class LootTracker : IDisposable
         chatGui.ChatMessage += OnChatMessage;
     }
 
+    /// <summary>
+    /// Unregisters all listeners and cleans up resources.
+    /// </summary>
     public void Dispose()
     {
         addonLifecycle.UnregisterListener(
@@ -122,6 +145,10 @@ public sealed class LootTracker : IDisposable
         chatGui.ChatMessage -= OnChatMessage;
     }
 
+    /// <summary>
+    /// Triggered when the NeedGreed addon is first set up.
+    /// Detects new chests and handles grace‑period reopen logic.
+    /// </summary>
     private void OnNeedGreedSetup(
         AddonEvent type,
         AddonArgs args)
@@ -152,17 +179,24 @@ public sealed class LootTracker : IDisposable
         chestIsOpen = true;
     }
 
+    /// <summary>
+    /// Triggered when the NeedGreed addon is closing.
+    /// Marks the chest as closed and records the timestamp.
+    /// </summary>
     private void OnNeedGreedFinalize(
         AddonEvent type,
         AddonArgs args)
     {
-        log.Information(
-            "[LootTracker] NeedGreed closing.");
+        log.Information("[LootTracker] NeedGreed closing.");
 
         chestIsOpen = false;
         chestClosedAt = DateTime.Now;
     }
 
+    /// <summary>
+    /// Attempts to resolve the name of the current duty/zone.
+    /// Falls back to "Unknown Location" on failure.
+    /// </summary>
     private string GetCurrentDutyName()
     {
         try
@@ -195,6 +229,10 @@ public sealed class LootTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Triggered on NeedGreed refresh/draw events.
+    /// Updates item list for the active chest and resolves item names/icons.
+    /// </summary>
     private unsafe void OnNeedGreedRefresh(
         AddonEvent type,
         AddonArgs args)
@@ -233,8 +271,7 @@ public sealed class LootTracker : IDisposable
 
             trackedItem.IconId = item.IconId;
 
-            if (string.IsNullOrEmpty(
-                    trackedItem.ItemName))
+            if (string.IsNullOrEmpty(trackedItem.ItemName))
             {
                 trackedItem.ItemName =
                     ResolveItemName(item.ItemId);
@@ -250,6 +287,10 @@ public sealed class LootTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Resolves the ClassJob ID for a given player name.
+    /// Handles both "You" and party members.
+    /// </summary>
     private uint? ResolveClassJobId(
         string playerName)
     {
@@ -282,6 +323,9 @@ public sealed class LootTracker : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Resolves the item name from the Lumina Item sheet.
+    /// </summary>
     private string ResolveItemName(uint itemId)
     {
         try
@@ -304,6 +348,10 @@ public sealed class LootTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Parses loot‑related chat messages and converts them into
+    /// <see cref="LootChatEvent"/> instances.
+    /// </summary>
     private void OnChatMessage(
         IHandleableChatMessage message)
     {
@@ -339,10 +387,7 @@ public sealed class LootTracker : IDisposable
 
         LootChatEvent? evt = null;
 
-        // -------------------------------------------------------------
-        // YOU ROLL
-        // -------------------------------------------------------------
-
+        // YOU roll
         var youRoll =
             YouRollValueRegex.Match(text);
 
@@ -364,10 +409,7 @@ public sealed class LootTracker : IDisposable
         }
         else
         {
-            // ---------------------------------------------------------
-            // OTHER PLAYER ROLLS
-            // ---------------------------------------------------------
-
+            // Other player roll
             var roll =
                 RollValueRegex.Match(text);
 
@@ -393,10 +435,7 @@ public sealed class LootTracker : IDisposable
             }
             else if (YouCastLotRegex.IsMatch(text))
             {
-                // -----------------------------------------------------
-                // YOU CAST LOT
-                // -----------------------------------------------------
-
+                // YOU cast lot
                 evt = new LootChatEvent(
                     LootChatEventKind.CastLot,
                     "You",
@@ -406,10 +445,7 @@ public sealed class LootTracker : IDisposable
             }
             else
             {
-                // -----------------------------------------------------
-                // OTHER PLAYER CAST LOT
-                // -----------------------------------------------------
-
+                // Other player cast lot
                 var cast =
                     CastLotRegex.Match(text);
 
@@ -428,10 +464,7 @@ public sealed class LootTracker : IDisposable
                 }
                 else
                 {
-                    // -------------------------------------------------
-                    // ITEM OBTAINED
-                    // -------------------------------------------------
-
+                    // Item obtained
                     var obtain =
                         ObtainedRegex.Match(text);
 
@@ -465,6 +498,10 @@ public sealed class LootTracker : IDisposable
         ProcessLootEvent(evt);
     }
 
+    /// <summary>
+    /// Applies a parsed loot event to the active chest and item state.
+    /// Handles roll updates, cast‑lot tracking, and final resolution.
+    /// </summary>
     private void ProcessLootEvent(
         LootChatEvent evt)
     {
@@ -503,16 +540,11 @@ public sealed class LootTracker : IDisposable
 
                 if (existingRoll != null)
                 {
-                    // Type tem private set, portanto não o alteramos
-                    // diretamente. O jogo normalmente envia o roll final
-                    // uma única vez por jogador.
-
-                    existingRoll.SetValue(
-                        evt.RollValue);
+                    // Type has private setter; only value and job can be updated.
+                    existingRoll.SetValue(evt.RollValue);
 
                     existingRoll.SetClassJob(
-                        ResolveClassJobId(
-                            evt.PlayerName));
+                        ResolveClassJobId(evt.PlayerName));
                 }
                 else
                 {
@@ -521,8 +553,7 @@ public sealed class LootTracker : IDisposable
                             evt.PlayerName,
                             rollType,
                             evt.RollValue,
-                            ResolveClassJobId(
-                                evt.PlayerName)));
+                            ResolveClassJobId(evt.PlayerName)));
                 }
 
                 break;
@@ -553,6 +584,10 @@ public sealed class LootTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// For all participants who never rolled Need/Greed,
+    /// automatically assigns a Pass result once the item is resolved.
+    /// </summary>
     private void InferPassForRemainingParticipants(
         LootItem item)
     {
@@ -570,8 +605,7 @@ public sealed class LootTracker : IDisposable
                     participant,
                     RollType.Pass,
                     null,
-                    ResolveClassJobId(
-                        participant)));
+                    ResolveClassJobId(participant)));
         }
     }
 }
