@@ -1,0 +1,27 @@
+[
+  {
+    "Author": "Stinguim(Taigo)",
+    "Name": "LootGoblin",
+    "InternalName": "LootGoblin",
+    "AssemblyVersion": "0.0.0.1",
+    "Punchline": "Check what everyone rolled for loot!",
+    "Description": "This plugin allows the user to verify with every chest what anyone rolled/passed. Works better in trials for mount farming.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Stinguim/Loot-Goblin-FF14",
+    "Tags": [
+      "loot",
+      "plugin",
+      "rolls",
+      "roll"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadPriority": 0,
+    "IconUrl": "",
+    "ImageUrls": [],
+    "DownloadLinkInstall": "https://github.com/Stinguim/Loot-Goblin-FF14/releases/latest/download/LootGoblin.zip",
+    "DownloadLinkTesting": "https://github.com/Stinguim/Loot-Goblin-FF14/releases/latest/download/LootGoblin.zip",
+    "DownloadLinkUpdate": "https://github.com/Stinguim/Loot-Goblin-FF14/releases/latest/download/LootGoblin.zip",
+    "IsHide": false,
+    "IsTestingExclusive": false
+  }
+]
