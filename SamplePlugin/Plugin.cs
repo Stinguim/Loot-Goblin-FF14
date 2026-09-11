@@ -1,94 +1,148 @@
-﻿using Dalamud.Game.Command;
+﻿using System.IO;
+
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
-using System.IO;
-using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using SamplePlugin.Windows;
-using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Interface.Windowing;
+
 using SamplePlugin.LootTracking;
+using SamplePlugin.Windows;
 
 namespace SamplePlugin;
 
 public sealed class Plugin : IDalamudPlugin
 {
-    [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
-    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
-    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
-    [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
-    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
-    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
-    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
-    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
-    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService]
+    internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+
+    [PluginService]
+    internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+
+    [PluginService]
+    internal static ITextureProvider TextureProvider { get; private set; } = null!;
+
+    [PluginService]
+    internal static ICommandManager CommandManager { get; private set; } = null!;
+
+    [PluginService]
+    internal static IClientState ClientState { get; private set; } = null!;
+
+    [PluginService]
+    internal static IObjectTable ObjectTable { get; private set; } = null!;
+
+    [PluginService]
+    internal static IPlayerState PlayerState { get; private set; } = null!;
+
+    [PluginService]
+    internal static IDataManager DataManager { get; private set; } = null!;
+
+    [PluginService]
+    internal static IPartyList PartyList { get; private set; } = null!;
+
+    [PluginService]
+    internal static IPluginLog Log { get; private set; } = null!;
+
+    [PluginService]
+    internal static IChatGui ChatGui { get; private set; } = null!;
 
     private const string CommandName = "/lootcheck";
 
-    public Configuration Configuration { get; init; }
+    public Configuration Configuration { get; }
 
-    public readonly WindowSystem WindowSystem = new("SamplePlugin");
-    private ConfigWindow ConfigWindow { get; init; }
-    private MainWindow MainWindow { get; init; }
-    internal LootTracker LootTracker { get; init; }
+    public WindowSystem WindowSystem { get; } = new("SamplePlugin");
+
+    private ConfigWindow ConfigWindow { get; }
+    private MainWindow MainWindow { get; }
+
+    internal LootTracker LootTracker { get; }
 
     public Plugin()
     {
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Configuration = PluginInterface.GetPluginConfig() as Configuration
+            ?? new Configuration();
 
-        // You might normally want to embed resources and load them from the manifest stream
-        var goatImagePath = Path.Combine(PluginInterface.AssemblyLocation.Directory?.FullName!, "goat.png");
+        var goatImagePath = Path.Combine(
+            PluginInterface.AssemblyLocation.Directory?.FullName ?? string.Empty,
+            "goat.png");
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this, goatImagePath);
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
-        LootTracker = new LootTracker(AddonLifecycle, ChatGui, Log);
 
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Opens/Closes the loot results window."
-        });
+        // Inicializa o LootTracker.
+        LootTracker = new LootTracker(
+            AddonLifecycle,
+            ChatGui,
+            DataManager,
+            ClientState,
+            ObjectTable,
+            PartyList,
+            Log);
 
-        // Tell the UI system that we want our windows to be drawn through the window system
+        // Abre a janela quando um novo baú é detetado.
+        LootTracker.ChestOpened += OnChestOpened;
+
+        // Slash command.
+        CommandManager.AddHandler(
+            CommandName,
+            new CommandInfo(OnCommand)
+            {
+                HelpMessage = "Opens/Closes the loot results window."
+            });
+
+        // UI.
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
-
-        // This adds a button to the plugin installer entry of this plugin which allows
-        // toggling the display status of the configuration ui
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
-
-        // Adds another button doing the same but for the main ui of the plugin
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
-        // Add a simple message to the log with level set to information
-        // Use /xllog to open the log window in-game
-        // Example Output: 00:57:54.959 | INF | [SamplePlugin] ===A cool log message from Sample Plugin===
-        Log.Information($"===A cool log message from {PluginInterface.Manifest.Name}===");
+        Log.Information(
+            $"===A cool log message from {PluginInterface.Manifest.Name}===");
     }
 
     public void Dispose()
     {
-        // Unregister all actions to not leak anything during disposal of plugin
+        // Remove eventos do UI.
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-        
+
+        // Remove o evento do LootTracker.
+        LootTracker.ChestOpened -= OnChestOpened;
+
+        // Dispose do LootTracker.
+        LootTracker.Dispose();
+
+        // Remove command.
+        CommandManager.RemoveHandler(CommandName);
+
+        // Dispose das janelas.
         WindowSystem.RemoveAllWindows();
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();
-
-        LootTracker.Dispose();
-
-        CommandManager.RemoveHandler(CommandName);
     }
 
     private void OnCommand(string command, string args)
     {
-        // In response to the slash command, toggle the display status of our main ui
         MainWindow.Toggle();
     }
-    
-    public void ToggleConfigUi() => ConfigWindow.Toggle();
-    public void ToggleMainUi() => MainWindow.Toggle();
+
+    private void OnChestOpened()
+    {
+        MainWindow.IsOpen = true;
+    }
+
+    public void ToggleConfigUi()
+    {
+        ConfigWindow.Toggle();
+    }
+
+    public void ToggleMainUi()
+    {
+        MainWindow.Toggle();
+    }
 }
