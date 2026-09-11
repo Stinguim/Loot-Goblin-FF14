@@ -10,11 +10,4 @@
     <RepoUrl>https://github.com/Stinguim/Loot-Goblin-FF14</RepoUrl>
     <Tags>loot;plugin;rolls;roll</Tags>
   </PropertyGroup>
-
-  <ItemGroup>
-    <Content Include="..\Data\goat.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </Content>
-  </ItemGroup>
 </Project>
