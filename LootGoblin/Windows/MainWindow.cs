@@ -6,6 +6,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
+using Lumina.Excel.Sheets;
 
 using SamplePlugin.LootTracking;
 
@@ -63,9 +64,14 @@ public class MainWindow : Window, IDisposable
         for (var c = session.Chests.Count - 1; c >= 0; c--)
         {
             var chest = session.Chests[c];
-            var header = $"Chest {chest.ChestNumber} — {chest.DungeonName}";
+            var isMostRecentChest = c == session.Chests.Count - 1;
+            var header = $"Chest {chest.ChestNumber} — {chest.DungeonName} ({chest.Items.Count})";
 
-            if (ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen))
+            // Só o baú mais recente vem aberto por defeito — os antigos ficam
+            // colapsados para não encher a lista em sessões longas.
+            var flags = isMostRecentChest ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
+
+            if (ImGui.CollapsingHeader($"{header}##chestheader{chest.ChestNumber}", flags))
             {
                 ImGui.Indent();
 
@@ -145,24 +151,40 @@ public class MainWindow : Window, IDisposable
 
     private void DrawItemDetails(LootItem item)
     {
-        DrawRollSection(
-            "Need:",
-            item.Rolls.Where(r => r.Type == RollType.Need),
-            new Vector4(0.95f, 0.35f, 0.35f, 1f));
+        var hasRollInfo = item.Rolls.Count != 0;
 
-        ImGui.Spacing();
+        // Se o item já foi resolvido (Obtained) mas nunca registámos nenhum
+        // Need/Greed/Pass (ex.: ninguém interagiu, ou perdemos os eventos),
+        // mostra uma mensagem clara em vez de 3 secções vazias lado a lado.
+        if (item.IsComplete && !hasRollInfo)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Not enough info, or everyone passed on this item.");
+        }
+        else
+        {
+            DrawRollSection(
+                "Need:",
+                item.Rolls.Where(r => r.Type == RollType.Need),
+                new Vector4(0.95f, 0.35f, 0.35f, 1f),
+                item.Winner);
 
-        DrawRollSection(
-            "Greed:",
-            item.Rolls.Where(r => r.Type == RollType.Greed),
-            new Vector4(0.4f, 0.85f, 0.4f, 1f));
+            ImGui.Spacing();
 
-        ImGui.Spacing();
+            DrawRollSection(
+                "Greed:",
+                item.Rolls.Where(r => r.Type == RollType.Greed),
+                new Vector4(0.4f, 0.85f, 0.4f, 1f),
+                item.Winner);
 
-        DrawRollSection(
-            "Pass:",
-            item.Rolls.Where(r => r.Type == RollType.Pass),
-            new Vector4(0.6f, 0.6f, 0.6f, 1f));
+            ImGui.Spacing();
+
+            DrawRollSection(
+                "Pass:",
+                item.Rolls.Where(r => r.Type == RollType.Pass),
+                new Vector4(0.6f, 0.6f, 0.6f, 1f),
+                item.Winner);
+        }
 
         if (item.IsComplete && item.Winner != null)
         {
@@ -170,11 +192,12 @@ public class MainWindow : Window, IDisposable
             ImGui.Separator();
             ImGui.Spacing();
 
-            DrawIcon(item.IconId, new Vector2(40, 40));
+            DrawCenteredIcon(item.IconId, new Vector2(96, 96));
 
-            ImGui.TextColored(
-                new Vector4(1f, 0.85f, 0.2f, 1f),
-                $"Winner: {item.Winner}");
+            ImGui.Spacing();
+            DrawCenteredText(
+                $"Winner: {item.Winner}",
+                new Vector4(1f, 0.85f, 0.2f, 1f));
         }
     }
 
@@ -201,12 +224,54 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Igual ao <see cref="DrawIcon"/>, mas centra o ícone horizontalmente
+    /// dentro do espaço disponível (usado para o ícone grande do "Winner").
+    /// </summary>
+    private static void DrawCenteredIcon(uint iconId, Vector2 size)
+    {
+        if (iconId == 0)
+            return;
+
+        var availableWidth = ImGui.GetContentRegionAvail().X;
+        var offsetX = (availableWidth - size.X) * 0.5f;
+
+        if (offsetX > 0)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + offsetX);
+        }
+
+        DrawIcon(iconId, size);
+    }
+
+    /// <summary>
+    /// Desenha texto centrado horizontalmente no espaço disponível.
+    /// </summary>
+    private static void DrawCenteredText(string text, Vector4 color)
+    {
+        var availableWidth = ImGui.GetContentRegionAvail().X;
+        var textWidth = ImGui.CalcTextSize(text).X;
+        var offsetX = (availableWidth - textWidth) * 0.5f;
+
+        if (offsetX > 0)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + offsetX);
+        }
+
+        ImGui.TextColored(color, text);
+    }
+
     private void DrawRollSection(
         string label,
         IEnumerable<LootRoll> rollsToDisplay,
-        Vector4 headerColor)
+        Vector4 headerColor,
+        string? winnerName)
     {
-        var rolls = rollsToDisplay.ToList();
+        // Maior roll primeiro — ajuda a ver de imediato quem tem mais hipóteses.
+        // Quem ainda não rolou (Value null) fica no fim.
+        var rolls = rollsToDisplay
+            .OrderByDescending(r => r.Value ?? -1)
+            .ToList();
 
         ImGui.TextColored(headerColor, label);
 
@@ -221,9 +286,22 @@ public class MainWindow : Window, IDisposable
 
         foreach (var roll in rolls)
         {
+            var isWinner = winnerName != null && roll.PlayerName == winnerName;
+
             if (roll.ClassJobId.HasValue)
             {
                 DrawIcon(ClassJobIconBase + roll.ClassJobId.Value, new Vector2(16, 16));
+
+                if (ImGui.IsItemHovered())
+                {
+                    var jobName = ResolveJobName(roll.ClassJobId.Value);
+
+                    if (!string.IsNullOrEmpty(jobName))
+                    {
+                        ImGui.SetTooltip(jobName);
+                    }
+                }
+
                 ImGui.SameLine();
             }
 
@@ -231,12 +309,39 @@ public class MainWindow : Window, IDisposable
                 ? roll.Value.Value.ToString()
                 : "-";
 
+            if (isWinner)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.2f, 1f));
+            }
+
             ImGui.Text($"{roll.PlayerName}:");
             ImGui.SameLine();
             ImGui.Text(valueText);
+
+            if (isWinner)
+            {
+                ImGui.PopStyleColor();
+            }
         }
 
         ImGui.Unindent();
+    }
+
+    /// <summary>
+    /// Nome do ClassJob (ex.: "Warrior") para mostrar em tooltip sobre o ícone
+    /// da classe. Devolve string vazia se não conseguir resolver.
+    /// </summary>
+    private static string ResolveJobName(uint classJobId)
+    {
+        try
+        {
+            var row = Plugin.DataManager.GetExcelSheet<ClassJob>().GetRowOrDefault(classJobId);
+            return row?.Name.ToString() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>

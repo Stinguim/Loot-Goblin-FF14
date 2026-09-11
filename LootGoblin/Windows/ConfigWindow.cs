@@ -17,7 +17,7 @@ public class ConfigWindow : Window, IDisposable
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
 
-        Size = new Vector2(232, 90);
+        Size = new Vector2(280, 120);
         SizeCondition = ImGuiCond.Always;
 
         configuration = plugin.Configuration;
@@ -53,6 +53,13 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Checkbox("Movable Config Window", ref movable))
         {
             configuration.IsConfigWindowMovable = movable;
+            configuration.Save();
+        }
+
+        var autoOpen = configuration.AutoOpenOnNewChest;
+        if (ImGui.Checkbox("Auto-open Loot Results on new chest", ref autoOpen))
+        {
+            configuration.AutoOpenOnNewChest = autoOpen;
             configuration.Save();
         }
     }

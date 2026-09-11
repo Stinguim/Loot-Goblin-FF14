@@ -3,13 +3,12 @@
   <PropertyGroup>
     <Version>0.0.0.1</Version>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
-    <Author>your name here</Author>
-    <Name>Sample Plugin</Name>
-    <Punchline>A short one-liner that shows up in /xlplugins.</Punchline>
-    <Description>A brief overview of what your plugin does, highlighting its key features.
-This is shown when the user expands the plugin entry in /xlplugins.</Description>
-    <RepoUrl>https://github.com/goatcorp/SamplePlugin</RepoUrl>
-    <Tags>sample;plugin;goats</Tags>
+    <Author>Stinguim(Taigo)</Author>
+    <Name>LootGoblin</Name>
+    <Punchline>Check what everyone rolled for loot!</Punchline>
+    <Description>This plugin allows the user to verify with every chest what anyone rolled/passed. Works better in trials for mount farming.</Description>
+    <RepoUrl>https://github.com/Stinguim/Loot-Goblin-FF14</RepoUrl>
+    <Tags>loot;plugin;rolls;roll</Tags>
   </PropertyGroup>
 
   <ItemGroup>
