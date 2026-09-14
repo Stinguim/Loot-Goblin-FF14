@@ -3,7 +3,7 @@
     "Author": "Stinguim(Taigo)",
     "Name": "LootGoblin",
     "InternalName": "LootGoblin",
-    "AssemblyVersion": "0.0.0.1",
+    "AssemblyVersion": "1.0.0.0",
     "Punchline": "Check what everyone rolled for loot!",
     "Description": "This plugin allows the user to verify with every chest what anyone rolled/passed. Works better in trials for mount farming.",
     "ApplicableVersion": "any",
