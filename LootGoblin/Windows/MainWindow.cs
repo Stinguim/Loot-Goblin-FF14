@@ -19,7 +19,7 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin plugin;
     private (int ChestNumber, uint ItemId)? selectedKey;
 
-    public MainWindow(Plugin plugin, string goatImagePath)
+    public MainWindow(Plugin plugin)
         : base(
             "Loot Results##LootViewMainWindow",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)

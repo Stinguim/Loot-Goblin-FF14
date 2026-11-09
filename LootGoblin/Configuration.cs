@@ -8,12 +8,9 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 0;
 
-    public bool IsConfigWindowMovable { get; set; } = true;
-    public bool SomePropertyToBeSavedAndWithADefault { get; set; } = true;
-
     /// <summary>
-    /// Se true, a janela "Loot Results" abre automaticamente sempre que um
-    /// novo baú é detetado (PostSetup do addon NeedGreed).
+    /// If true, the "Loot Results" window opens automatically when a
+    /// new chest is detected (PostSetup from addon NeedGreed).
     /// </summary>
     public bool AutoOpenOnNewChest { get; set; } = true;
 

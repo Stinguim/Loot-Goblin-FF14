@@ -10,7 +10,7 @@ Every time a loot chest opens, LootGoblin quietly tracks it in the background an
 - **Grouped by chest** — each loot window is grouped under its own "Chest N — Dungeon Name" entry, so you can scroll back through everything that dropped during a run instead of losing track after the first item.
 - **Winner spotlight** — once an item is awarded, its icon and winner are shown front and center.
 - **Class icons** — see at a glance which job rolled on an item, for every member of your party (not just yourself).
-- **Auto-popup** — the window can open automatically the moment a new chest appears, so you never miss a roll. This can be turned off in the settings if you'd rather open it manually.
+- **Auto-popup** — the window can open automatically the moment a new chest appears, so you never miss a roll.
 - **Clear button** — wipe the current session whenever you want a fresh start.
 
 ## Installation

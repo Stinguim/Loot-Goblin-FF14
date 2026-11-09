@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Text.RegularExpressions;
 
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
@@ -16,13 +15,16 @@ using Lumina.Excel.Sheets;
 namespace LootGoblin.LootTracking;
 
 /// <summary>
-/// Core loot‑tracking engine. Monitors Need/Greed addon lifecycle events,
-/// parses chat messages related to loot rolls, and updates the active
-/// <see cref="LootSession"/> accordingly.
+/// Core loot-tracking engine. Monitors Need/Greed addon lifecycle events,
+/// reads loot-roll log messages, and updates the active <see cref="LootSession"/>.
 /// </summary>
 public sealed class LootTracker : IDisposable
 {
     private const string AddonName = "NeedGreed";
+
+    private static readonly TimeSpan ChestReopenGracePeriod = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DrawRefreshInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan DiagnosticTail = TimeSpan.FromSeconds(30);
 
     private readonly IAddonLifecycle addonLifecycle;
     private readonly IChatGui chatGui;
@@ -32,51 +34,22 @@ public sealed class LootTracker : IDisposable
     private readonly IPartyList partyList;
     private readonly IPluginLog log;
 
-    /// <summary>
-    /// The currently active loot session, containing all chests opened
-    /// during the current duty or gameplay segment.
-    /// </summary>
-    public LootSession CurrentSession { get; } = new();
-
     private bool chestIsOpen;
     private DateTime? chestClosedAt;
+    private DateTime lastDrawRefresh = DateTime.MinValue;
+
+    /// <summary>The currently active loot session.</summary>
+    public LootSession CurrentSession { get; } = new();
 
     /// <summary>
-    /// Grace period allowing the NeedGreed window to reopen without
-    /// creating a new chest (e.g., UI flicker or quick refresh).
+    /// Debug aid: while a chest is open (and shortly after), logs the id and
+    /// format of every game log message. Use it to fill <see cref="LootLogMessageIds"/>.
     /// </summary>
-    private static readonly TimeSpan ChestReopenGracePeriod =
-        TimeSpan.FromSeconds(5);
+    public bool LogRawLootMessages { get; set; }
 
-    /// <summary>
-    /// Fired whenever a new chest is detected and initialized.
-    /// </summary>
+    /// <summary>Fired whenever a new chest is detected and initialized.</summary>
     public event System.Action? ChestOpened;
 
-    // Chat parsing regexes
-    private static readonly Regex RollValueRegex = new(
-        @"^(?<player>.+?) rolls? (?<type>Need|Greed|Pass) on the .+\. (?<value>\d+)!$",
-        RegexOptions.Compiled);
-
-    private static readonly Regex YouRollValueRegex = new(
-        @"^You roll (?<type>Need|Greed|Pass) on the .+\. (?<value>\d+)!$",
-        RegexOptions.Compiled);
-
-    private static readonly Regex CastLotRegex = new(
-        @"^(?<player>.+?) casts (his|her|their) lot for the",
-        RegexOptions.Compiled);
-
-    private static readonly Regex YouCastLotRegex = new(
-        @"^You cast your lot for the",
-        RegexOptions.Compiled);
-
-    private static readonly Regex ObtainedRegex = new(
-        @"^(?<player>.+?) obtains? a",
-        RegexOptions.Compiled);
-
-    /// <summary>
-    /// Initializes the loot tracker and registers all addon and chat listeners.
-    /// </summary>
     public LootTracker(
         IAddonLifecycle addonLifecycle,
         IChatGui chatGui,
@@ -94,79 +67,40 @@ public sealed class LootTracker : IDisposable
         this.partyList = partyList;
         this.log = log;
 
-        addonLifecycle.RegisterListener(
-            AddonEvent.PostSetup,
-            AddonName,
-            OnNeedGreedSetup);
+        addonLifecycle.RegisterListener(AddonEvent.PostSetup, AddonName, OnNeedGreedSetup);
+        addonLifecycle.RegisterListener(AddonEvent.PostRefresh, AddonName, OnNeedGreedRefresh);
+        addonLifecycle.RegisterListener(AddonEvent.PostDraw, AddonName, OnNeedGreedDraw);
+        addonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnNeedGreedFinalize);
 
-        addonLifecycle.RegisterListener(
-            AddonEvent.PostRefresh,
-            AddonName,
-            OnNeedGreedRefresh);
-
-        addonLifecycle.RegisterListener(
-            AddonEvent.PostDraw,
-            AddonName,
-            OnNeedGreedRefresh);
-
-        addonLifecycle.RegisterListener(
-            AddonEvent.PreFinalize,
-            AddonName,
-            OnNeedGreedFinalize);
-
+        chatGui.LogMessage += OnLogMessage;
         chatGui.ChatMessage += OnChatMessage;
     }
 
-    /// <summary>
-    /// Unregisters all listeners and cleans up resources.
-    /// </summary>
     public void Dispose()
     {
-        addonLifecycle.UnregisterListener(
-            AddonEvent.PostSetup,
-            AddonName,
-            OnNeedGreedSetup);
+        addonLifecycle.UnregisterListener(AddonEvent.PostSetup, AddonName, OnNeedGreedSetup);
+        addonLifecycle.UnregisterListener(AddonEvent.PostRefresh, AddonName, OnNeedGreedRefresh);
+        addonLifecycle.UnregisterListener(AddonEvent.PostDraw, AddonName, OnNeedGreedDraw);
+        addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, AddonName, OnNeedGreedFinalize);
 
-        addonLifecycle.UnregisterListener(
-            AddonEvent.PostRefresh,
-            AddonName,
-            OnNeedGreedRefresh);
-
-        addonLifecycle.UnregisterListener(
-            AddonEvent.PostDraw,
-            AddonName,
-            OnNeedGreedRefresh);
-
-        addonLifecycle.UnregisterListener(
-            AddonEvent.PreFinalize,
-            AddonName,
-            OnNeedGreedFinalize);
-
+        chatGui.LogMessage -= OnLogMessage;
         chatGui.ChatMessage -= OnChatMessage;
     }
 
-    /// <summary>
-    /// Triggered when the NeedGreed addon is first set up.
-    /// Detects new chests and handles grace‑period reopen logic.
-    /// </summary>
-    private void OnNeedGreedSetup(
-        AddonEvent type,
-        AddonArgs args)
+    private void OnNeedGreedSetup(AddonEvent type, AddonArgs args)
     {
         var withinGracePeriod =
             chestClosedAt.HasValue &&
-            DateTime.Now - chestClosedAt.Value < ChestReopenGracePeriod;
+            DateTime.UtcNow - chestClosedAt.Value < ChestReopenGracePeriod;
 
         if (!chestIsOpen &&
-            (CurrentSession.CurrentChest == null ||
-             !withinGracePeriod))
+            (CurrentSession.CurrentChest == null || !withinGracePeriod))
         {
             var dungeonName = GetCurrentDutyName();
 
             CurrentSession.StartNewChest(dungeonName);
 
-            log.Information(
-                $"[LootTracker] NeedGreed opened. Chest: {dungeonName}");
+            log.Information($"[LootTracker] NeedGreed opened. Chest: {dungeonName}");
 
             ChestOpened?.Invoke();
         }
@@ -179,77 +113,39 @@ public sealed class LootTracker : IDisposable
         chestIsOpen = true;
     }
 
-    /// <summary>
-    /// Triggered when the NeedGreed addon is closing.
-    /// Marks the chest as closed and records the timestamp.
-    /// </summary>
-    private void OnNeedGreedFinalize(
-        AddonEvent type,
-        AddonArgs args)
+    private void OnNeedGreedFinalize(AddonEvent type, AddonArgs args)
     {
         log.Information("[LootTracker] NeedGreed closing.");
 
         chestIsOpen = false;
-        chestClosedAt = DateTime.Now;
+        chestClosedAt = DateTime.UtcNow;
     }
 
-    /// <summary>
-    /// Attempts to resolve the name of the current duty/zone.
-    /// Falls back to "Unknown Location" on failure.
-    /// </summary>
-    private string GetCurrentDutyName()
+    private void OnNeedGreedDraw(AddonEvent type, AddonArgs args)
     {
-        try
-        {
-            var territoryId = clientState.TerritoryType;
+        // PostDraw fires every frame; the item list does not need to be re-read that often.
+        var now = DateTime.UtcNow;
 
-            var territorySheet =
-                dataManager.GetExcelSheet<TerritoryType>();
+        if (now - lastDrawRefresh < DrawRefreshInterval)
+            return;
 
-            var territoryRow =
-                territorySheet.GetRowOrDefault(territoryId);
+        lastDrawRefresh = now;
 
-            if (territoryRow == null)
-                return "Unknown Location";
-
-            var placeName =
-                territoryRow.Value.PlaceName.ValueNullable?.Name.ToString();
-
-            return string.IsNullOrWhiteSpace(placeName)
-                ? "Unknown Location"
-                : placeName;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(
-                ex,
-                "[LootTracker] Failed to resolve current duty name.");
-
-            return "Unknown Location";
-        }
+        OnNeedGreedRefresh(type, args);
     }
 
-    /// <summary>
-    /// Triggered on NeedGreed refresh/draw events.
-    /// Updates item list for the active chest and resolves item names/icons.
-    /// </summary>
-    private unsafe void OnNeedGreedRefresh(
-        AddonEvent type,
-        AddonArgs args)
+    private unsafe void OnNeedGreedRefresh(AddonEvent type, AddonArgs args)
     {
         if (args.Addon.Address == nint.Zero)
             return;
 
-        var addon =
-            (AddonNeedGreed*)args.Addon.Address;
+        var addon = (AddonNeedGreed*)args.Addon.Address;
 
-        var count =
-            Math.Min((int)addon->NumItems, 16);
+        var count = Math.Min((int)addon->NumItems, 16);
 
         var chest =
             CurrentSession.CurrentChest ??
-            CurrentSession.StartNewChest(
-                GetCurrentDutyName());
+            CurrentSession.StartNewChest(GetCurrentDutyName());
 
         for (var i = 0; i < count; i++)
         {
@@ -258,102 +154,98 @@ public sealed class LootTracker : IDisposable
             if (item.ItemId == 0)
                 continue;
 
-            var isNewItem =
-                !chest.Items.ContainsKey(item.ItemId);
+            var isNewItem = !chest.Items.ContainsKey(item.ItemId);
 
             var trackedItem =
                 chest.Items.GetOrAdd(
                     item.ItemId,
-                    id => new LootItem
-                    {
-                        ItemId = id
-                    });
+                    id => new LootItem { ItemId = id });
 
             trackedItem.IconId = item.IconId;
 
             if (string.IsNullOrEmpty(trackedItem.ItemName))
-            {
-                trackedItem.ItemName =
-                    ResolveItemName(item.ItemId);
-            }
+                trackedItem.ItemName = ResolveItemName(item.ItemId);
 
             if (isNewItem)
             {
                 log.Information(
                     $"[LootTracker] New item tracked: " +
-                    $"Id={item.ItemId} " +
-                    $"Name={trackedItem.ItemName}");
+                    $"Id={item.ItemId} Name={trackedItem.ItemName}");
             }
         }
     }
 
     /// <summary>
-    /// Resolves the ClassJob ID for a given player name.
-    /// Handles both "You" and party members.
+    /// Language-independent path: classifies messages by LogMessage row id.
     /// </summary>
-    private uint? ResolveClassJobId(
-        string playerName)
+    private void OnLogMessage(ILogMessage message)
     {
-        try
+        if (LogRawLootMessages && IsDiagnosticWindowOpen())
         {
-            if (playerName == "You")
-            {
-                return objectTable.LocalPlayer?
-                    .ClassJob.RowId;
-            }
-
-            foreach (var member in partyList)
-            {
-                var memberName =
-                    $"{member.Name}@{member.World.Value.Name}";
-
-                if (memberName == playerName)
-                {
-                    return member.ClassJob.RowId;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Warning(
-                ex,
-                $"[LootTracker] Failed to resolve class job for {playerName}.");
+            log.Information(
+                $"[LootTracker][diag] id={message.LogMessageId} " +
+                $"format={message.FormatLogMessageForDebugging()}");
         }
 
-        return null;
+        if (!LootLogMessageIds.TryGet(message.LogMessageId, out var descriptor))
+            return;
+
+        var parsed = LootMessageParser.ParseLogMessage(message, descriptor);
+
+        if (parsed == null)
+        {
+            log.Debug(
+                $"[LootTracker] Could not read parameters for LogMessage {message.LogMessageId}.");
+
+            return;
+        }
+
+        // Safety net: parameter indices are not verified, so only accept
+        // events for items that are actually in the current chest.
+        var chest = CurrentSession.CurrentChest;
+
+        if (chest == null || !chest.Items.ContainsKey(parsed.ItemId))
+        {
+            log.Debug(
+                $"[LootTracker] Ignored LogMessage {message.LogMessageId}: " +
+                $"item {parsed.ItemId} is not in the current chest.");
+
+            return;
+        }
+
+        var evt = new LootChatEvent(
+            parsed.Kind,
+            NormalizePlayerName(parsed.PlayerName),
+            parsed.ItemId,
+            parsed.RollType,
+            parsed.RollValue);
+
+        log.Debug($"[LootTracker] Parsed log message: {evt}");
+
+        ProcessLootEvent(evt);
     }
 
     /// <summary>
-    /// Resolves the item name from the Lumina Item sheet.
+    /// The text-based path reports the local player as "You"; keep the same
+    /// convention for the log message path.
     /// </summary>
-    private string ResolveItemName(uint itemId)
+    private string NormalizePlayerName(string playerName)
     {
-        try
-        {
-            var itemSheet =
-                dataManager.GetExcelSheet<Item>();
+        var local = objectTable.LocalPlayer;
 
-            var row =
-                itemSheet.GetRowOrDefault(itemId);
+        if (local == null || string.IsNullOrEmpty(playerName))
+            return playerName;
 
-            return row?.Name.ToString() ?? string.Empty;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(
-                ex,
-                $"[LootTracker] Failed to resolve item name for ItemId={itemId}.");
+        var localName = $"{local.Name}@{local.HomeWorld.Value.Name}";
 
-            return string.Empty;
-        }
+        return playerName == localName ? "You" : playerName;
     }
 
     /// <summary>
-    /// Parses loot‑related chat messages and converts them into
-    /// <see cref="LootChatEvent"/> instances.
+    /// English-only text fallback. Disabled once LootLogMessageIds is populated,
+    /// so the same message is never processed twice.
     /// </summary>
-    private void OnChatMessage(
-        IHandleableChatMessage message)
+    private void OnChatMessage(IHandleableChatMessage message)
     {
         var type = message.LogKind;
         var chatMessage = message.Message;
@@ -364,187 +256,63 @@ public sealed class LootTracker : IDisposable
             return;
         }
 
-        var itemPayload =
-            chatMessage.Payloads
-                .OfType<ItemPayload>()
-                .FirstOrDefault();
+        var itemPayload = chatMessage.Payloads.OfType<ItemPayload>().FirstOrDefault();
 
         if (itemPayload == null)
             return;
 
-        var playerPayload =
-            chatMessage.Payloads
-                .OfType<PlayerPayload>()
-                .FirstOrDefault();
+        var playerPayload = chatMessage.Payloads.OfType<PlayerPayload>().FirstOrDefault();
 
-        var playerNameFromPayload =
-            playerPayload != null
-                ? $"{playerPayload.PlayerName}@{playerPayload.World.Value.Name}"
-                : null;
+        var playerNameFromPayload = playerPayload != null
+            ? $"{playerPayload.PlayerName}@{playerPayload.World.Value.Name}"
+            : null;
 
-        var text =
-            chatMessage.TextValue;
+        var text = chatMessage.TextValue;
 
-        LootChatEvent? evt = null;
-
-        // YOU roll
-        var youRoll =
-            YouRollValueRegex.Match(text);
-
-        if (youRoll.Success)
-        {
-            if (!int.TryParse(
-                    youRoll.Groups["value"].Value,
-                    out var value))
-            {
-                return;
-            }
-
-            evt = new LootChatEvent(
-                LootChatEventKind.RollValue,
-                "You",
-                itemPayload.ItemId,
-                youRoll.Groups["type"].Value,
-                value);
-        }
-        else
-        {
-            // Other player roll
-            var roll =
-                RollValueRegex.Match(text);
-
-            if (roll.Success)
-            {
-                if (!int.TryParse(
-                        roll.Groups["value"].Value,
-                        out var value))
-                {
-                    return;
-                }
-
-                var playerName =
-                    playerNameFromPayload ??
-                    roll.Groups["player"].Value;
-
-                evt = new LootChatEvent(
-                    LootChatEventKind.RollValue,
-                    playerName,
-                    itemPayload.ItemId,
-                    roll.Groups["type"].Value,
-                    value);
-            }
-            else if (YouCastLotRegex.IsMatch(text))
-            {
-                // YOU cast lot
-                evt = new LootChatEvent(
-                    LootChatEventKind.CastLot,
-                    "You",
-                    itemPayload.ItemId,
-                    null,
-                    null);
-            }
-            else
-            {
-                // Other player cast lot
-                var cast =
-                    CastLotRegex.Match(text);
-
-                if (cast.Success)
-                {
-                    var playerName =
-                        playerNameFromPayload ??
-                        cast.Groups["player"].Value;
-
-                    evt = new LootChatEvent(
-                        LootChatEventKind.CastLot,
-                        playerName,
-                        itemPayload.ItemId,
-                        null,
-                        null);
-                }
-                else
-                {
-                    // Item obtained
-                    var obtain =
-                        ObtainedRegex.Match(text);
-
-                    if (obtain.Success)
-                    {
-                        var matchedPlayer =
-                            obtain.Groups["player"].Value;
-
-                        var playerName =
-                            matchedPlayer.Equals(
-                                "You",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? "You"
-                                : playerNameFromPayload ??
-                                  matchedPlayer;
-
-                        evt = new LootChatEvent(
-                            LootChatEventKind.Obtained,
-                            playerName,
-                            itemPayload.ItemId,
-                            null,
-                            null);
-                    }
-                }
-            }
-        }
+        var evt = LootMessageParser.Parse(text, itemPayload.ItemId, playerNameFromPayload);
 
         if (evt == null)
+        {
+            log.Debug($"[LootTracker] Unrecognized loot message: {text}");
             return;
+        }
+
+        log.Debug($"[LootTracker] Parsed loot message: {evt}");
 
         ProcessLootEvent(evt);
     }
 
-    /// <summary>
-    /// Applies a parsed loot event to the active chest and item state.
-    /// Handles roll updates, cast‑lot tracking, and final resolution.
-    /// </summary>
-    private void ProcessLootEvent(
-        LootChatEvent evt)
+    private void ProcessLootEvent(LootChatEvent evt)
     {
-        log.Information(
-            $"[LootTracker] Loot event received: {evt}");
+        log.Information($"[LootTracker] Loot event received: {evt}");
 
         var chest =
             CurrentSession.CurrentChest ??
-            CurrentSession.StartNewChest(
-                GetCurrentDutyName());
+            CurrentSession.StartNewChest(GetCurrentDutyName());
 
         var item =
             chest.Items.GetOrAdd(
                 evt.ItemId,
-                id => new LootItem
-                {
-                    ItemId = id
-                });
+                id => new LootItem { ItemId = id });
 
         switch (evt.Kind)
         {
             case LootChatEventKind.RollValue:
             {
                 if (evt.RollType == null ||
-                    !Enum.TryParse<RollType>(
-                        evt.RollType,
-                        true,
-                        out var rollType))
+                    !Enum.TryParse<RollType>(evt.RollType, true, out var rollType))
                 {
                     return;
                 }
 
                 var existingRoll =
-                    item.Rolls.FirstOrDefault(
-                        r => r.PlayerName == evt.PlayerName);
+                    item.Rolls.FirstOrDefault(r => r.PlayerName == evt.PlayerName);
 
                 if (existingRoll != null)
                 {
-                    // Type has private setter; only value and job can be updated.
+                    // Type has a private setter; only value and job can be updated.
                     existingRoll.SetValue(evt.RollValue);
-
-                    existingRoll.SetClassJob(
-                        ResolveClassJobId(evt.PlayerName));
+                    existingRoll.SetClassJob(ResolveClassJobId(evt.PlayerName));
                 }
                 else
                 {
@@ -571,10 +339,7 @@ public sealed class LootTracker : IDisposable
 
             case LootChatEventKind.CastLot:
             {
-                item.Participants.TryAdd(
-                    evt.PlayerName,
-                    0);
-
+                item.Participants.TryAdd(evt.PlayerName, 0);
                 break;
             }
 
@@ -584,20 +349,11 @@ public sealed class LootTracker : IDisposable
         }
     }
 
-    /// <summary>
-    /// For all participants who never rolled Need/Greed,
-    /// automatically assigns a Pass result once the item is resolved.
-    /// </summary>
-    private void InferPassForRemainingParticipants(
-        LootItem item)
+    private void InferPassForRemainingParticipants(LootItem item)
     {
         foreach (var participant in item.Participants.Keys)
         {
-            var alreadyRolled =
-                item.Rolls.Any(
-                    r => r.PlayerName == participant);
-
-            if (alreadyRolled)
+            if (item.Rolls.Any(r => r.PlayerName == participant))
                 continue;
 
             item.Rolls.Add(
@@ -606,6 +362,71 @@ public sealed class LootTracker : IDisposable
                     RollType.Pass,
                     null,
                     ResolveClassJobId(participant)));
+        }
+    }
+
+    private bool IsDiagnosticWindowOpen()
+        => chestIsOpen ||
+           (chestClosedAt.HasValue &&
+            DateTime.UtcNow - chestClosedAt.Value < DiagnosticTail);
+
+    private string GetCurrentDutyName()
+    {
+        try
+        {
+            var territorySheet = dataManager.GetExcelSheet<TerritoryType>();
+            var territoryRow = territorySheet.GetRowOrDefault(clientState.TerritoryType);
+
+            if (territoryRow == null)
+                return "Unknown Location";
+
+            var placeName = territoryRow.Value.PlaceName.ValueNullable?.Name.ToString();
+
+            return string.IsNullOrWhiteSpace(placeName) ? "Unknown Location" : placeName;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "[LootTracker] Failed to resolve current duty name.");
+            return "Unknown Location";
+        }
+    }
+
+    private uint? ResolveClassJobId(string playerName)
+    {
+        try
+        {
+            if (playerName == "You")
+                return objectTable.LocalPlayer?.ClassJob.RowId;
+
+            foreach (var member in partyList)
+            {
+                var memberName = $"{member.Name}@{member.World.Value.Name}";
+
+                if (memberName == playerName)
+                    return member.ClassJob.RowId;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[LootTracker] Failed to resolve class job for {playerName}.");
+        }
+
+        return null;
+    }
+
+    private string ResolveItemName(uint itemId)
+    {
+        try
+        {
+            var itemSheet = dataManager.GetExcelSheet<Item>();
+            var row = itemSheet.GetRowOrDefault(itemId);
+
+            return row?.Name.ToString() ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[LootTracker] Failed to resolve item name for ItemId={itemId}.");
+            return string.Empty;
         }
     }
 }
