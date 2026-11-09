@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace SamplePlugin.LootTracking;
+namespace LootGoblin.LootTracking;
 
 public sealed class LootItem
 {

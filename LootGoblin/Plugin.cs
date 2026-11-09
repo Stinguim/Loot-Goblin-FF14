@@ -1,14 +1,15 @@
-﻿using Dalamud.Game.Command;
+﻿
+using Dalamud.Game.Command;
+using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.IoC;
 using Dalamud.Plugin;
-using System.IO;
-using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using SamplePlugin.Windows;
-using Dalamud.Game.Addon.Lifecycle;
-using SamplePlugin.LootTracking;
+using Dalamud.Interface.Windowing;
+using LootGoblin.Windows;
+using LootGoblin.LootTracking;
+using System.IO;
 
-namespace SamplePlugin;
+namespace LootGoblin;
 
 public sealed class Plugin : IDalamudPlugin
 {
@@ -28,26 +29,35 @@ public sealed class Plugin : IDalamudPlugin
 
     public Configuration Configuration { get; init; }
 
-    public readonly WindowSystem WindowSystem = new("SamplePlugin");
-    private ConfigWindow ConfigWindow { get; init; }
+    public readonly WindowSystem WindowSystem = new("LootGoblin");
+
     private MainWindow MainWindow { get; init; }
+
     internal LootTracker LootTracker { get; init; }
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        // You might normally want to embed resources and load them from the manifest stream
-        var goatImagePath = Path.Combine(PluginInterface.AssemblyLocation.Directory?.FullName!, "goat.png");
+        var goatImagePath = Path.Combine(
+            PluginInterface.AssemblyLocation.Directory?.FullName!,
+            "goat.png"
+        );
 
-        ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this, goatImagePath);
 
-        WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
-        LootTracker = new LootTracker(AddonLifecycle, ChatGui, DataManager, ClientState, ObjectTable, PartyList, Log);
 
-        // Abre a janela principal automaticamente sempre que um novo baú é detetado.
+        LootTracker = new LootTracker(
+            AddonLifecycle,
+            ChatGui,
+            DataManager,
+            ClientState,
+            ObjectTable,
+            PartyList,
+            Log
+        );
+
         LootTracker.ChestOpened += OnChestOpened;
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -55,43 +65,31 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "Opens/Closes the loot results window."
         });
 
-        // Tell the UI system that we want our windows to be drawn through the window system
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
 
-        // This adds a button to the plugin installer entry of this plugin which allows
-        // toggling the display status of the configuration ui
+        // Both configuration and main UI buttons open the main window.
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
-
-        // Adds another button doing the same but for the main ui of the plugin
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
-
-        // Add a simple message to the log with level set to information
-        // Use /xllog to open the log window in-game
-        // Example Output: 00:57:54.959 | INF | [SamplePlugin] ===A cool log message from Sample Plugin===
-        Log.Information($"===A cool log message from {PluginInterface.Manifest.Name}===");
     }
 
     public void Dispose()
     {
-        // Unregister all actions to not leak anything during disposal of plugin
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-        
-        WindowSystem.RemoveAllWindows();
-
-        ConfigWindow.Dispose();
-        MainWindow.Dispose();
 
         LootTracker.ChestOpened -= OnChestOpened;
         LootTracker.Dispose();
+
+        WindowSystem.RemoveAllWindows();
+
+        MainWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
     }
 
     private void OnCommand(string command, string args)
     {
-        // In response to the slash command, toggle the display status of our main ui
         MainWindow.Toggle();
     }
 
@@ -102,7 +100,14 @@ public sealed class Plugin : IDalamudPlugin
             MainWindow.IsOpen = true;
         }
     }
-    
-    public void ToggleConfigUi() => ConfigWindow.Toggle();
-    public void ToggleMainUi() => MainWindow.Toggle();
+
+    private void ToggleConfigUi()
+    {
+        MainWindow.Toggle();
+    }
+
+    private void ToggleMainUi()
+    {
+        MainWindow.Toggle();
+    }
 }

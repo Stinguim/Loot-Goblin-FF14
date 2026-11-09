@@ -13,7 +13,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 
 using Lumina.Excel.Sheets;
 
-namespace SamplePlugin.LootTracking;
+namespace LootGoblin.LootTracking;
 
 /// <summary>
 /// Core loot‑tracking engine. Monitors Need/Greed addon lifecycle events,

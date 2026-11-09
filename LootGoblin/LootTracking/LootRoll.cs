@@ -1,4 +1,4 @@
-namespace SamplePlugin.LootTracking;
+namespace LootGoblin.LootTracking;
 
 public enum RollType
 {

@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -6,15 +7,15 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Utility.Raii;
 using Lumina.Excel.Sheets;
 
-using SamplePlugin.LootTracking;
+using LootGoblin.LootTracking;
 
-namespace SamplePlugin.Windows;
+namespace LootGoblin.Windows;
 
 public class MainWindow : Window, IDisposable
 {
-    private readonly string goatImagePath;
     private readonly Plugin plugin;
     private (int ChestNumber, uint ItemId)? selectedKey;
 
@@ -29,7 +30,6 @@ public class MainWindow : Window, IDisposable
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
         };
 
-        this.goatImagePath = goatImagePath;
         this.plugin = plugin;
     }
 
@@ -55,85 +55,91 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        ImGui.BeginChild(
+        using (var child = ImRaii.Child(
             "ItemList",
             new Vector2(220, 0),
-            true);
-
-        // Mostra o baú mais recente no topo.
-        for (var c = session.Chests.Count - 1; c >= 0; c--)
+            true))
         {
-            var chest = session.Chests[c];
-            var isMostRecentChest = c == session.Chests.Count - 1;
-            var header = $"Chest {chest.ChestNumber} — {chest.DungeonName} ({chest.Items.Count})";
+            if (!child)
+                return;
 
-            // Só o baú mais recente vem aberto por defeito — os antigos ficam
-            // colapsados para não encher a lista em sessões longas.
-            var flags = isMostRecentChest ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-
-            if (ImGui.CollapsingHeader($"{header}##chestheader{chest.ChestNumber}", flags))
+            // Display the most recent chest at the top.
+            for (var c = session.Chests.Count - 1; c >= 0; c--)
             {
-                ImGui.Indent();
+                var chest = session.Chests[c];
+                var isMostRecentChest = c == session.Chests.Count - 1;
+                var header = $"Chest {chest.ChestNumber} — {chest.DungeonName} ({chest.Items.Count})";
 
-                if (chest.Items.IsEmpty)
+                // Only the most recent chest is expanded by default.
+                // Older chests remain collapsed to keep long sessions manageable.
+                var flags = isMostRecentChest
+                    ? ImGuiTreeNodeFlags.DefaultOpen
+                    : ImGuiTreeNodeFlags.None;
+
+                if (ImGui.CollapsingHeader($"{header}##chestheader{chest.ChestNumber}", flags))
                 {
-                    ImGui.TextDisabled("Waiting for items...");
+                    ImGui.Indent();
+
+                    if (chest.Items.IsEmpty)
+                    {
+                        ImGui.TextDisabled("Waiting for items...");
+                    }
+
+                    foreach (var item in chest.Items.Values)
+                    {
+                        var displayName = string.IsNullOrEmpty(item.ItemName)
+                            ? $"Item {item.ItemId}"
+                            : item.ItemName;
+
+                        var key = (chest.ChestNumber, item.ItemId);
+                        var isSelected = selectedKey == key;
+
+                        if (isSelected)
+                        {
+                            ImGui.PushStyleColor(
+                                ImGuiCol.Text,
+                                new Vector4(0.4f, 1f, 0.4f, 1f));
+                        }
+
+                        // The ##id suffix ensures unique identifiers when the same item
+                        // appears in different chests.
+                        if (ImGui.Selectable($"{displayName}##{chest.ChestNumber}_{item.ItemId}", isSelected))
+                        {
+                            selectedKey = key;
+                        }
+
+                        if (isSelected)
+                        {
+                            ImGui.PopStyleColor();
+                        }
+                    }
+
+                    ImGui.Unindent();
                 }
-
-                foreach (var item in chest.Items.Values)
-                {
-                    var displayName = string.IsNullOrEmpty(item.ItemName)
-                        ? $"Item {item.ItemId}"
-                        : item.ItemName;
-
-                    var key = (chest.ChestNumber, item.ItemId);
-                    var isSelected = selectedKey == key;
-
-                    if (isSelected)
-                    {
-                        ImGui.PushStyleColor(
-                            ImGuiCol.Text,
-                            new Vector4(0.4f, 1f, 0.4f, 1f));
-                    }
-
-                    // ##id garante um identificador único mesmo que o mesmo item
-                    // apareça em baús diferentes.
-                    if (ImGui.Selectable($"{displayName}##{chest.ChestNumber}_{item.ItemId}", isSelected))
-                    {
-                        selectedKey = key;
-                    }
-
-                    if (isSelected)
-                    {
-                        ImGui.PopStyleColor();
-                    }
-                }
-
-                ImGui.Unindent();
             }
         }
 
-        ImGui.EndChild();
-
         ImGui.SameLine();
 
-        ImGui.BeginChild(
+        using (var child = ImRaii.Child(
             "ItemDetails",
             new Vector2(0, 0),
-            true);
-
-        var selectedItem = FindSelectedItem(session);
-
-        if (selectedItem != null)
+            true))
         {
-            DrawItemDetails(selectedItem);
-        }
-        else
-        {
-            ImGui.TextDisabled("Select an item to see details.");
-        }
+            if (!child)
+                return;
 
-        ImGui.EndChild();
+            var selectedItem = FindSelectedItem(session);
+
+            if (selectedItem != null)
+            {
+                DrawItemDetails(selectedItem);
+            }
+            else
+            {
+                ImGui.TextDisabled("Select an item to see details.");
+            }
+        }
     }
 
     private LootItem? FindSelectedItem(LootSession session)
@@ -141,21 +147,23 @@ public class MainWindow : Window, IDisposable
         if (selectedKey == null)
             return null;
 
-        var chest = session.Chests.FirstOrDefault(c => c.ChestNumber == selectedKey.Value.ChestNumber);
+        var chest = session.Chests.FirstOrDefault(
+            c => c.ChestNumber == selectedKey.Value.ChestNumber);
 
         if (chest == null)
             return null;
 
-        return chest.Items.TryGetValue(selectedKey.Value.ItemId, out var item) ? item : null;
+        return chest.Items.TryGetValue(selectedKey.Value.ItemId, out var item)
+            ? item
+            : null;
     }
 
     private void DrawItemDetails(LootItem item)
     {
         var hasRollInfo = item.Rolls.Count != 0;
 
-        // Se o item já foi resolvido (Obtained) mas nunca registámos nenhum
-        // Need/Greed/Pass (ex.: ninguém interagiu, ou perdemos os eventos),
-        // mostra uma mensagem clara em vez de 3 secções vazias lado a lado.
+        // If the item has been resolved (Obtained) but no Need/Greed/Pass
+        // events were recorded, display a clear message instead of empty sections.
         if (item.IsComplete && !hasRollInfo)
         {
             ImGui.Spacing();
@@ -195,6 +203,7 @@ public class MainWindow : Window, IDisposable
             DrawCenteredIcon(item.IconId, new Vector2(96, 96));
 
             ImGui.Spacing();
+
             DrawCenteredText(
                 $"Winner: {item.Winner}",
                 new Vector4(1f, 0.85f, 0.2f, 1f));
@@ -202,8 +211,8 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Desenha um ícone do jogo (item ou classe) a partir do IconId. Falha em
-    /// silêncio se o IconId for 0 ou o texture provider não conseguir carregar.
+    /// Draws a game icon (item or class) using its IconId.
+    /// Silently fails if the IconId is 0 or the texture provider cannot load it.
     /// </summary>
     private static void DrawIcon(uint iconId, Vector2 size)
     {
@@ -220,13 +229,13 @@ public class MainWindow : Window, IDisposable
         }
         catch
         {
-            // Se o ícone não carregar por qualquer razão, simplesmente não desenha nada.
+            // If the icon fails to load, simply skip drawing it.
         }
     }
 
     /// <summary>
-    /// Igual ao <see cref="DrawIcon"/>, mas centra o ícone horizontalmente
-    /// dentro do espaço disponível (usado para o ícone grande do "Winner").
+    /// Draws an icon centered horizontally within the available space.
+    /// Used for the large Winner icon.
     /// </summary>
     private static void DrawCenteredIcon(uint iconId, Vector2 size)
     {
@@ -245,7 +254,7 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Desenha texto centrado horizontalmente no espaço disponível.
+    /// Draws horizontally centered text within the available space.
     /// </summary>
     private static void DrawCenteredText(string text, Vector4 color)
     {
@@ -267,8 +276,8 @@ public class MainWindow : Window, IDisposable
         Vector4 headerColor,
         string? winnerName)
     {
-        // Maior roll primeiro — ajuda a ver de imediato quem tem mais hipóteses.
-        // Quem ainda não rolou (Value null) fica no fim.
+        // Sort rolls from highest to lowest.
+        // Players who have not rolled yet (Value null) are placed at the bottom.
         var rolls = rollsToDisplay
             .OrderByDescending(r => r.Value ?? -1)
             .ToList();
@@ -311,7 +320,9 @@ public class MainWindow : Window, IDisposable
 
             if (isWinner)
             {
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.2f, 1f));
+                ImGui.PushStyleColor(
+                    ImGuiCol.Text,
+                    new Vector4(1f, 0.85f, 0.2f, 1f));
             }
 
             ImGui.Text($"{roll.PlayerName}:");
@@ -328,8 +339,8 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Nome do ClassJob (ex.: "Warrior") para mostrar em tooltip sobre o ícone
-    /// da classe. Devolve string vazia se não conseguir resolver.
+    /// Resolves the ClassJob name (e.g. "Warrior") for the icon tooltip.
+    /// Returns an empty string if the job cannot be resolved.
     /// </summary>
     private static string ResolveJobName(uint classJobId)
     {
@@ -345,8 +356,8 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Offset dos ícones de classe/job na tabela de ícones do jogo
-    /// (IconId = 62100 + ClassJobId).
+    /// Base offset for class/job icons in the game icon table.
+    /// IconId = 62100 + ClassJobId.
     /// </summary>
     private const uint ClassJobIconBase = 62100;
 }

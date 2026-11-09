@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 
-namespace SamplePlugin.LootTracking;
+namespace LootGoblin.LootTracking;
 
 /// <summary>
 /// Represents a single instance of the Need/Greed loot window — typically

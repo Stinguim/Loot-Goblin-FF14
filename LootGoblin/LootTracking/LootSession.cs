@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace SamplePlugin.LootTracking;
+namespace LootGoblin.LootTracking;
 
 /// <summary>
 /// Represents the current loot session, divided into individual "chests".
